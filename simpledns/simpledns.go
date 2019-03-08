@@ -195,7 +195,7 @@ func (h *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	h.Logger("SimpleDNS %s->%s: %+v", w.RemoteAddr(), w.LocalAddr(), msg)
+    h.Logger("SimpleDNS: Serving %s->%s: %+v", w.RemoteAddr(), w.LocalAddr(), msg)
 
 	w.WriteMsg(&msg)
 }
