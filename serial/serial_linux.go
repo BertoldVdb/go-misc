@@ -1,6 +1,8 @@
 package serial
 
 import (
+	"errors"
+	"io"
 	"os"
 	"syscall"
 	"unsafe"
@@ -9,7 +11,8 @@ import (
 )
 
 type serialPortLinux struct {
-	file *os.File
+	file      *os.File
+	closeChan chan (struct{})
 }
 
 func (port *serialPortLinux) SetFlowControl(enabled bool) error {
@@ -46,22 +49,27 @@ func (port *serialPortLinux) defaultPortConfig() error {
 	/* Most basic serial config possible */
 	termios.Cflag |= uint32(syscall.CS8 | syscall.CLOCAL | syscall.CREAD)
 
-	/* Read character at a time */
-	termios.Cc[syscall.VTIME] = 0
-	termios.Cc[syscall.VMIN] = 1
+	/* Calling close during read does not always seem to cancel it (usually does though)
+	 * Therefore we put a 1s timeout so reads always return.
+	 * According to the go documentation this should not be neccesary
+	 * (Although I don't know if a serial port counts as a normal linux file) */
+	termios.Cc[syscall.VTIME] = 10
+	termios.Cc[syscall.VMIN] = 0
 
 	/* Set it */
 	return unix.IoctlSetTermios(int(port.file.Fd()), unix.TCSETS2, termios)
 }
 
 func openPortOs(options *PortOptions) (*serialPortLinux, error) {
-	file, err := os.OpenFile(options.PortName, syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_CLOEXEC, 0600)
+	file, err := os.OpenFile(options.PortName, syscall.O_RDWR|syscall.O_NOCTTY|syscall.O_NONBLOCK, 0600)
 	if err != nil {
 		return nil, err
 	}
 
 	port := &serialPortLinux{}
 	port.file = file
+	port.closeChan = make(chan (struct{}), 1)
+	port.closeChan <- struct{}{}
 
 	/* Set default termios */
 	err = port.defaultPortConfig()
@@ -75,6 +83,11 @@ func openPortOs(options *PortOptions) (*serialPortLinux, error) {
 	}
 
 	err = port.SetFlowControl(options.FlowControl)
+	if err != nil {
+		goto failed
+	}
+
+	err = unix.SetNonblock(int(port.file.Fd()), false)
 	if err != nil {
 		goto failed
 	}
@@ -130,7 +143,19 @@ func (port *serialPortLinux) GetPins() (PortPins, error) {
 }
 
 func (port *serialPortLinux) Read(p []byte) (int, error) {
-	return port.file.Read(p)
+	for {
+		token, ok := <-port.closeChan
+		if !ok {
+			return 0, errors.New("Port closed")
+		}
+
+		n, err := port.file.Read(p)
+		port.closeChan <- token
+
+		if err != io.EOF {
+			return n, err
+		}
+	}
 }
 
 func (port *serialPortLinux) Write(p []byte) (int, error) {
@@ -138,5 +163,11 @@ func (port *serialPortLinux) Write(p []byte) (int, error) {
 }
 
 func (port *serialPortLinux) Close() error {
-	return port.file.Close()
+	_, ok := <-port.closeChan
+	if ok {
+		close(port.closeChan)
+		return port.Close()
+	}
+
+	return nil
 }
