@@ -12,8 +12,8 @@ import (
 
 // DNSEntry describes the record that will be returned.
 type DNSEntry struct {
-	value []string
-	ttl   uint32
+	Value []string
+	TTL   uint32
 }
 
 // Logger is a function interface that can be used for logging
@@ -30,7 +30,7 @@ type DNSServer struct {
 }
 
 // DnsMakeCurrentTime creates a responder that returns the current sever time
-func DnsMakeCurrentTime(name string) func(query string) *DNSEntry {
+func DNSMakeCurrentTime(name string) func(query string) *DNSEntry {
 	return func(query string) *DNSEntry {
 		if query != "TXT,W|"+name {
 			return nil
@@ -38,7 +38,7 @@ func DnsMakeCurrentTime(name string) func(query string) *DNSEntry {
 
 		now := time.Now().UnixNano() * int64(time.Nanosecond)
 
-		return &DNSEntry{ttl: 0, value: []string{strconv.FormatInt(now, 10)}}
+		return &DNSEntry{TTL: 0, Value: []string{strconv.FormatInt(now, 10)}}
 	}
 }
 
@@ -82,9 +82,9 @@ func (h *DNSServer) doLookup(qt string, domain string) *DNSEntry {
 
 func (h *DNSServer) handleA(lcName string, msg *dns.Msg, q *dns.Question) {
 	if value := h.doLookup("A", lcName); value != nil {
-		for _, v := range value.value {
+		for _, v := range value.Value {
 			msg.Answer = append(msg.Answer, &dns.A{
-				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: q.Qclass, Ttl: value.ttl},
+				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeA, Class: q.Qclass, Ttl: value.TTL},
 				A:   net.ParseIP(v),
 			})
 		}
@@ -93,9 +93,9 @@ func (h *DNSServer) handleA(lcName string, msg *dns.Msg, q *dns.Question) {
 
 func (h *DNSServer) handleAAAA(lcName string, msg *dns.Msg, q *dns.Question) {
 	if value := h.doLookup("AAAA", lcName); value != nil {
-		for _, v := range value.value {
+		for _, v := range value.Value {
 			msg.Answer = append(msg.Answer, &dns.AAAA{
-				Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: q.Qclass, Ttl: value.ttl},
+				Hdr:  dns.RR_Header{Name: q.Name, Rrtype: dns.TypeAAAA, Class: q.Qclass, Ttl: value.TTL},
 				AAAA: net.ParseIP(v),
 			})
 		}
@@ -104,9 +104,9 @@ func (h *DNSServer) handleAAAA(lcName string, msg *dns.Msg, q *dns.Question) {
 
 func (h *DNSServer) handleMX(lcName string, msg *dns.Msg, q *dns.Question) {
 	if value := h.doLookup("MX", lcName); value != nil {
-		for _, v := range value.value {
+		for _, v := range value.Value {
 			msg.Answer = append(msg.Answer, &dns.MX{
-				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeMX, Class: q.Qclass, Ttl: value.ttl},
+				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeMX, Class: q.Qclass, Ttl: value.TTL},
 				Mx:  v,
 			})
 		}
@@ -115,10 +115,10 @@ func (h *DNSServer) handleMX(lcName string, msg *dns.Msg, q *dns.Question) {
 
 func (h *DNSServer) handleTXT(lcName string, msg *dns.Msg, q *dns.Question) {
 	if value := h.doLookup("TXT", lcName); value != nil {
-		if len(value.value) > 0 {
+		if len(value.Value) > 0 {
 			msg.Answer = append(msg.Answer, &dns.TXT{
-				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: q.Qclass, Ttl: value.ttl},
-				Txt: value.value,
+				Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeTXT, Class: q.Qclass, Ttl: value.TTL},
+				Txt: value.Value,
 			})
 		}
 	}
@@ -137,7 +137,7 @@ func (h *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	sendNs := 0
 
 	soaValue := h.doLookup("SOA", lcName)
-	if soaValue != nil && len(soaValue.value) > 0 {
+	if soaValue != nil && len(soaValue.Value) > 0 {
 		msg.Authoritative = true
 
 		sendNs = 1
@@ -159,15 +159,15 @@ func (h *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		h.handleTXT(lcName, &msg, q)
 	case dns.TypeNS:
 		if msg.Authoritative {
-			if soaValue.value[0] == lcName {
+			if soaValue.Value[0] == lcName {
 				sendNs = 2
 			}
 		}
 	case dns.TypeSOA:
 		if msg.Authoritative {
-			if soaValue.value[0] == lcName {
+			if soaValue.Value[0] == lcName {
 				msg.Answer = append(msg.Answer, &dns.SOA{
-					Hdr:     dns.RR_Header{Name: q.Name, Rrtype: q.Qtype, Class: q.Qclass, Ttl: soaValue.ttl},
+					Hdr:     dns.RR_Header{Name: q.Name, Rrtype: q.Qtype, Class: q.Qclass, Ttl: soaValue.TTL},
 					Ns:      h.NSNames[0],
 					Mbox:    h.SoaMBox,
 					Serial:  uint32(time.Now().UnixNano() * int64(time.Nanosecond) / int64(time.Second)),
@@ -184,7 +184,7 @@ func (h *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	if sendNs > 0 {
 		for _, l := range h.NSNames {
 			ns := &dns.NS{
-				Hdr: dns.RR_Header{Name: soaValue.value[0], Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: soaValue.ttl},
+				Hdr: dns.RR_Header{Name: soaValue.Value[0], Rrtype: dns.TypeNS, Class: dns.ClassINET, Ttl: soaValue.TTL},
 				Ns:  l,
 			}
 			if sendNs == 1 {
@@ -195,7 +195,7 @@ func (h *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-    h.Logger("SimpleDNS: Serving %s->%s: %+v", w.RemoteAddr(), w.LocalAddr(), msg)
+	h.Logger("SimpleDNS: Serving %s->%s: %+v", w.RemoteAddr(), w.LocalAddr(), msg)
 
 	w.WriteMsg(&msg)
 }
