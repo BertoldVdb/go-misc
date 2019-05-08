@@ -33,10 +33,21 @@ func (s *RedirectServer) handleRedirectHTTPS() http.HandlerFunc {
 		}
 
 		if s.Logger != nil {
-			s.Logger("HTTPRedirect: Redirecting %s to %s", r.RemoteAddr, destination)
+			s.Logger("HTTPRedirect: %s: Redirecting to %s", r.RemoteAddr, destination)
 		}
 
-		http.Redirect(w, r, destination, s.Status)
+		if s.Status >= 0 {
+			http.Redirect(w, r, destination, s.Status)
+		} else {
+			page := []byte("" +
+				"<html><head>" +
+				"<meta http-equiv=\"refresh\" content=\"0;url=" + destination + "\"/>" +
+				"<script>window.location.href = \"" + destination + "\";</script>" +
+				"<title>Redirect</title></head><body>" +
+				"<h1><a href=\"" + destination + "\">Click here to continue</a></h1>" +
+				"</body></html>")
+			w.Write(page)
+		}
 	}
 
 	doOCSP := func(w http.ResponseWriter, r *http.Request, queryBytes []byte) bool {
@@ -46,7 +57,7 @@ func (s *RedirectServer) handleRedirectHTTPS() http.HandlerFunc {
 		}
 
 		if s.Logger != nil {
-			s.Logger("HTTPRedirect: Blocked %s OCSP for %s with serial number %s", r.Method, r.RemoteAddr, result.SerialNumber)
+			s.Logger("HTTPRedirect: %s: Blocked %s OCSP with serial number %s", r.RemoteAddr, r.Method, result.SerialNumber)
 		}
 
 		/* DER encoded TryLater error:
@@ -63,18 +74,24 @@ func (s *RedirectServer) handleRedirectHTTPS() http.HandlerFunc {
 		//Don't keep connection open
 		w.Header().Set("Connection", "close")
 
+		if s.Logger != nil {
+			s.Logger("HTTPRedirect: %s: Processing %s request for http://%s%s", r.RemoteAddr, r.Method, r.Host, r.URL)
+		}
+
 		if s.FakeInternetAccess {
-			if r.URL.Path == "/generate_204" {
+			if (r.Host == "www.google.com" || r.Host == "connectivitycheck.gstatic.com" || r.Host == "play.googleapis.com") &&
+				(r.URL.Path == "/generate_204" || r.URL.Path == "/gen_204") {
+				/* To fake internet access for android it is required to let https requests to https://www.google.com/ through */
 				w.WriteHeader(http.StatusNoContent)
 				return
-			} else if r.URL.Path == "/library/test/success.html" {
+			} else if r.URL.Path == "/hotspot-detect.html" || r.URL.Path == "/library/test/success.html" {
 				w.Write([]byte("<HTML><HEAD><TITLE>Success</TITLE></HEAD><BODY>Success</BODY></HTML>"))
 				return
-			} else if r.URL.Path == "/ncsi.txt" {
+			} else if r.Host == "www.msftncsi.com" {
 				w.Header().Set("Content-Type", "text/plain")
 				w.Write([]byte("Microsoft NCSI"))
 				return
-			} else if r.URL.Path == "/connecttest.txt" {
+			} else if r.Host == "www.msftconnecttest.com" {
 				w.Header().Set("Content-Type", "text/plain")
 				w.Write([]byte("Microsoft Connect Test"))
 				return
@@ -149,7 +166,7 @@ func NewHTTPRedirect() *RedirectServer {
 	return s
 }
 
-// ListenAndServer starts the redirect server
+// ListenAndServe starts the redirect server
 func (s *RedirectServer) ListenAndServe(addr string) error {
 	s.server.Addr = addr
 	return s.server.ListenAndServe()

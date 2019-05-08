@@ -29,7 +29,7 @@ type DNSServer struct {
 	Logger         Logger
 }
 
-// DnsMakeCurrentTime creates a responder that returns the current sever time
+// DNSMakeCurrentTime creates a responder that returns the current sever time
 func DNSMakeCurrentTime(name string) func(query string) *DNSEntry {
 	return func(query string) *DNSEntry {
 		if query != "TXT,W|"+name {
@@ -143,26 +143,34 @@ func (h *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		sendNs = 1
 	}
 
+	tString := "Unknown"
+
 	switch q.Qtype {
 	case dns.TypeANY:
 		h.handleA(lcName, &msg, q)
 		h.handleAAAA(lcName, &msg, q)
 		h.handleMX(lcName, &msg, q)
 		h.handleTXT(lcName, &msg, q)
+		tString = "ANY"
 	case dns.TypeA:
 		h.handleA(lcName, &msg, q)
+		tString = "A"
 	case dns.TypeAAAA:
 		h.handleAAAA(lcName, &msg, q)
+		tString = "AAAA"
 	case dns.TypeMX:
 		h.handleMX(lcName, &msg, q)
+		tString = "MX"
 	case dns.TypeTXT:
 		h.handleTXT(lcName, &msg, q)
+		tString = "TXT"
 	case dns.TypeNS:
 		if msg.Authoritative {
 			if soaValue.Value[0] == lcName {
 				sendNs = 2
 			}
 		}
+		tString = "NS"
 	case dns.TypeSOA:
 		if msg.Authoritative {
 			if soaValue.Value[0] == lcName {
@@ -178,6 +186,7 @@ func (h *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				})
 			}
 		}
+		tString = "SOA"
 	}
 
 	//Add authority section, unless we want to send it as answer
@@ -195,7 +204,7 @@ func (h *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		}
 	}
 
-	h.Logger("SimpleDNS: Serving %s->%s: %+v", w.RemoteAddr(), w.LocalAddr(), msg)
+	h.Logger("SimpleDNS: Serving %s->%s: %s %s->%+v", w.RemoteAddr(), w.LocalAddr(), tString, lcName, msg.Answer)
 
 	w.WriteMsg(&msg)
 }
@@ -222,8 +231,8 @@ func (h *DNSServer) ListenAndServe(addr string, udp bool) error {
 	if udp {
 		serverUDP := &dns.Server{Addr: addr, Net: "udp", UDPSize: 4096, Handler: h}
 		return serverUDP.ListenAndServe()
-	} else {
-		serverTCP := &dns.Server{Addr: addr, Net: "tcp", Handler: h}
-		return serverTCP.ListenAndServe()
 	}
+
+	serverTCP := &dns.Server{Addr: addr, Net: "tcp", Handler: h}
+	return serverTCP.ListenAndServe()
 }
