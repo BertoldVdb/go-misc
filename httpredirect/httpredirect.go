@@ -79,8 +79,7 @@ func (s *RedirectServer) handleRedirectHTTPS() http.HandlerFunc {
 		}
 
 		if s.FakeInternetAccess {
-			if (r.Host == "www.google.com" || r.Host == "connectivitycheck.gstatic.com" || r.Host == "play.googleapis.com") &&
-				(r.URL.Path == "/generate_204" || r.URL.Path == "/gen_204") {
+			if r.URL.Path == "/generate_204" || r.URL.Path == "/gen_204" {
 				/* To fake internet access for android it is required to let https requests to https://www.google.com/ through */
 				w.WriteHeader(http.StatusNoContent)
 				return
