@@ -11,12 +11,15 @@ import (
 )
 
 type Device struct {
-	mutex sync.Mutex
-	file  *os.File
+	mutex     sync.Mutex
+	file      *os.File
+	Frequency uint32
 }
 
 func OpenDevice(deviceID int) (*Device, error) {
-	d := &Device{}
+	d := &Device{
+		frequency: 1000000,
+	}
 
 	var err error
 	d.file, err = os.OpenFile(fmt.Sprintf("/dev/spidev%d", deviceID), syscall.O_RDWR|syscall.O_NOCTTY, 0600)
@@ -50,7 +53,7 @@ func (d *Device) Transfer(writeBuf []byte, readBuf []byte) error {
 	}
 
 	tr := iocTransferRaw{
-		Frequency:   10000,
+		Frequency:   d.Frequency,
 		DelayUs:     20,
 		BitsPerWord: 8,
 	}

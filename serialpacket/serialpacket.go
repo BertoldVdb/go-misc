@@ -11,6 +11,8 @@ import (
 	"github.com/sigurn/crc8"
 )
 
+const AddressDefault = 0xFF
+
 var crcTable *crc8.Table
 
 func init() {
@@ -58,6 +60,8 @@ type commandReplyStruct struct {
 }
 
 type commandStruct struct {
+	Device *Device
+
 	Packet      []byte
 	Timeout     <-chan (time.Time)
 	TimeoutMs   int
@@ -65,8 +69,7 @@ type commandStruct struct {
 	ReplyChan   chan (commandReplyStruct)
 }
 
-type SerialPacket struct {
-	sync.Mutex
+type Bus struct {
 	port io.ReadWriteCloser
 
 	receiverState        receiverStateType
@@ -81,23 +84,46 @@ type SerialPacket struct {
 
 	cmdChan chan (*commandStruct)
 
-	currentCommand   *commandStruct
-	compressedSerial uint8
-	fullSerial       []byte
-	synced           bool
+	currentCommand *commandStruct
 
 	unlockKey []byte
 }
 
-func (s *SerialPacket) calcCRC(receive bool, cmd MessageType, payload []byte) (uint8, error) {
+type Device struct {
+	sync.Mutex
+
+	bus *Bus
+
+	compressedSerial uint8
+	fullSerial       []byte
+	synced           bool
+
+	address uint8
+}
+
+func (s *Bus) GetDefaultDevice() *Device {
+	return &Device{
+		address: AddressDefault,
+		bus:     s,
+	}
+}
+
+func (s *Bus) GetDevice(address uint8) *Device {
+	return &Device{
+		address: address,
+		bus:     s,
+	}
+}
+
+func (s *Bus) calcCRC(d *Device, cmd MessageType, payload []byte) (uint8, error) {
 	crc := crc8.Checksum(payload, crcTable)
 
-	if !receive {
+	if d != nil {
 		if cmd != messagePing && cmd != messageID {
-			s.Lock()
-			crc ^= s.compressedSerial
-			synced := s.synced
-			s.Unlock()
+			d.Lock()
+			crc ^= d.compressedSerial
+			synced := d.synced
+			d.Unlock()
 
 			if !synced {
 				return 0, ErrorNotConnected
@@ -112,8 +138,8 @@ func (s *SerialPacket) calcCRC(receive bool, cmd MessageType, payload []byte) (u
 	return crc, nil
 }
 
-func (s *SerialPacket) sendReset() error {
-	var buffer [256]byte
+func (s *Bus) sendReset() error {
+	var buffer [258]byte
 
 	_, err := s.port.Write(buffer[:])
 
@@ -139,7 +165,7 @@ func (s *SerialPacket) sendReset() error {
 	return nil
 }
 
-func (s *SerialPacket) sendPacket(payload []byte) error {
+func (s *Device) sendPacket(payload []byte) error {
 	pl := len(payload)
 
 	if pl >= 256 || pl < 1 {
@@ -149,20 +175,23 @@ func (s *SerialPacket) sendPacket(payload []byte) error {
 	/* Calculate CRC */
 	var buffer = make([]byte, 0, pl+3)
 	buffer = append(buffer, 'B')
+	if s.address != 0xFF {
+		buffer = append(buffer, s.address)
+	}
 	buffer = append(buffer, byte(pl))
 	buffer = append(buffer, payload...)
-	crc, err := s.calcCRC(false, MessageType(payload[0]), payload)
+	crc, err := s.bus.calcCRC(s, MessageType(payload[0]), payload)
 	if err != nil {
 		return err
 	}
 
 	buffer = append(buffer, crc)
 
-	_, err = s.port.Write(buffer)
+	_, err = s.bus.port.Write(buffer)
 	return err
 }
 
-func (s *SerialPacket) processInput(buffer []byte) error {
+func (s *Bus) processInput(buffer []byte) error {
 	for _, m := range buffer {
 		switch s.receiverState {
 		case waitSync:
@@ -189,7 +218,7 @@ func (s *SerialPacket) processInput(buffer []byte) error {
 
 		case readCRC:
 			receivedPacket := s.receiverBuffer[:s.receiverPacketLength]
-			crc, err := s.calcCRC(true, 0, receivedPacket)
+			crc, err := s.calcCRC(nil, 0, receivedPacket)
 			if err != nil {
 				return err
 			}
@@ -211,7 +240,7 @@ func (s *SerialPacket) processInput(buffer []byte) error {
 	return nil
 }
 
-func (s *SerialPacket) readWorker() error {
+func (s *Bus) readWorker() error {
 	defer close(s.rxChan)
 
 	var buffer [64]byte
@@ -232,7 +261,7 @@ func (s *SerialPacket) readWorker() error {
 	return nil
 }
 
-func (s *SerialPacket) drain(ms int) {
+func (s *Bus) drain(ms int) {
 	timeout := time.After(time.Duration(ms) * time.Millisecond)
 
 	for {
@@ -249,7 +278,7 @@ func (s *SerialPacket) drain(ms int) {
 	}
 }
 
-func (s *SerialPacket) processCommandReply(payload []byte, err error) {
+func (s *Bus) processCommandReply(payload []byte, err error) {
 	if err != nil {
 		s.sendReset()
 	}
@@ -265,7 +294,7 @@ func (s *SerialPacket) processCommandReply(payload []byte, err error) {
 	}
 }
 
-func (s *SerialPacket) ProtocolHandler() error {
+func (s *Bus) ProtocolHandler() error {
 	s.rxChan = make(chan ([]byte))
 	s.rxChanAck = make(chan (struct{}))
 	defer close(s.rxChanAck)
@@ -305,7 +334,7 @@ loop:
 		case cmd := <-cmdInChan:
 			s.currentCommand = cmd
 
-			err := s.sendPacket(cmd.Packet)
+			err := cmd.Device.sendPacket(cmd.Packet)
 			if err != nil {
 				s.processCommandReply(nil, err)
 			} else if cmd.Unsolicited {
@@ -319,7 +348,7 @@ loop:
 	return nil
 }
 
-func (s *SerialPacket) SendCommand(cmd MessageType, payload []byte, timeout int) ([]byte, error) {
+func (s *Device) SendCommand(cmd MessageType, payload []byte, timeout int) ([]byte, error) {
 	buf := make([]byte, 1, 1+len(payload))
 	buf[0] = byte(cmd)
 	buf = append(buf, payload...)
@@ -328,18 +357,19 @@ func (s *SerialPacket) SendCommand(cmd MessageType, payload []byte, timeout int)
 
 	cmdS := &commandStruct{
 		Packet:      buf,
+		Device:      s,
 		Unsolicited: unsolicited,
 		ReplyChan:   make(chan (commandReplyStruct), 1),
 		TimeoutMs:   timeout,
 	}
 
-	s.cmdChan <- cmdS
+	s.bus.cmdChan <- cmdS
 	reply := <-cmdS.ReplyChan
 
 	return reply.Payload, reply.Error
 }
 
-func (s *SerialPacket) GetDeviceSerial() ([]byte, error) {
+func (s *Device) GetDeviceSerial() ([]byte, error) {
 	s.Lock()
 	sync := s.synced
 	s.Unlock()
@@ -351,7 +381,7 @@ func (s *SerialPacket) GetDeviceSerial() ([]byte, error) {
 	return s.SendCommand(messageIDHash, nil, 100)
 }
 
-func (s *SerialPacket) syncTry() error {
+func (s *Device) syncTry() error {
 	random := make([]byte, 16)
 
 	for i := 0; i < 3; i++ {
@@ -370,7 +400,7 @@ func (s *SerialPacket) syncTry() error {
 	return nil
 }
 
-func (s *SerialPacket) Connect() ([]byte, error) {
+func (s *Device) Connect() ([]byte, error) {
 	var retVal error
 
 	s.Lock()
@@ -409,7 +439,7 @@ func (s *SerialPacket) Connect() ([]byte, error) {
 	return serial, nil
 }
 
-func (s *SerialPacket) TestComm() error {
+func (s *Device) TestComm() error {
 	serial2, err := s.GetDeviceSerial()
 	if err != nil {
 		return err
@@ -433,8 +463,8 @@ func (s *SerialPacket) TestComm() error {
 	return nil
 }
 
-func CreateProtocol(port io.ReadWriteCloser, key []byte) *SerialPacket {
-	a := &SerialPacket{}
+func CreateProtocol(port io.ReadWriteCloser, key []byte) *Bus {
+	a := &Bus{}
 
 	a.cmdChan = make(chan (*commandStruct), 20)
 	a.port = port
@@ -443,6 +473,6 @@ func CreateProtocol(port io.ReadWriteCloser, key []byte) *SerialPacket {
 	return a
 }
 
-func (s *SerialPacket) CloseProtocol() error {
+func (s *Bus) CloseProtocol() error {
 	return s.port.Close()
 }
