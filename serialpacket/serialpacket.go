@@ -2,6 +2,7 @@ package serialpacket
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"math/rand"
@@ -47,11 +48,12 @@ const (
 type MessageType byte
 
 const (
-	messageAck    MessageType = 0xFF
-	messageNack   MessageType = 0xFE
-	messagePing   MessageType = 0x01
-	messageIDHash MessageType = 0x02
-	messageID     MessageType = 0x03
+	messageAck     MessageType = 0xFF
+	messageNack    MessageType = 0xFE
+	messagePing    MessageType = 0x01
+	messageIDHash  MessageType = 0x02
+	messageID      MessageType = 0x03
+	messageSysTime MessageType = 0x04
 )
 
 type commandReplyStruct struct {
@@ -375,10 +377,27 @@ func (s *Device) GetDeviceSerial() ([]byte, error) {
 	s.Unlock()
 
 	if !sync {
-		return s.SendCommand(messageID, nil, 100)
+		return s.SendCommand(messageID, nil, 1000)
 	}
 
-	return s.SendCommand(messageIDHash, nil, 100)
+	return s.SendCommand(messageIDHash, nil, 1000)
+}
+
+func (s *Device) GetSystemTime() (uint64, error) {
+	reply, err := s.SendCommand(messageSysTime, nil, 1000)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(reply) == 4 {
+		return uint64(binary.BigEndian.Uint32(reply)), nil
+	}
+	if len(reply) == 8 {
+		return binary.BigEndian.Uint64(reply), nil
+	}
+
+	// Not supported
+	return 0, nil
 }
 
 func (s *Device) syncTry() error {
@@ -389,7 +408,7 @@ func (s *Device) syncTry() error {
 		syncRandom := random[:len]
 		rand.Read(syncRandom)
 
-		reply, err := s.SendCommand(messagePing, syncRandom, 100)
+		reply, err := s.SendCommand(messagePing, syncRandom, 1000) //TODO make configurable
 		if err != nil {
 			return err
 		} else if bytes.Compare(reply, syncRandom) != 0 {
