@@ -72,6 +72,8 @@ type commandStruct struct {
 }
 
 type Bus struct {
+	sync.Mutex
+
 	port io.ReadWriteCloser
 
 	receiverState        receiverStateType
@@ -79,12 +81,13 @@ type Bus struct {
 	receiverPacketIndex  uint8
 	receiverBuffer       [256]byte
 
-	UnsolicitedHandler func(msgType MessageType, buf []byte)
+	unsolicitedHandler func(msgType MessageType, buf []byte)
 
 	rxChan    chan ([]byte)
 	rxChanAck chan (struct{})
 
-	cmdChan chan (*commandStruct)
+	cmdChan        chan (*commandStruct)
+	disconnectChan chan (*Device)
 
 	currentCommand *commandStruct
 
@@ -101,19 +104,29 @@ type Device struct {
 	synced           bool
 
 	address uint8
+
+	Timeout int
 }
 
 func (s *Bus) GetDefaultDevice() *Device {
 	return &Device{
 		address: AddressDefault,
 		bus:     s,
+		Timeout: 1000,
 	}
+}
+
+func (s *Bus) SetUnsolicitedHandler(cb func(msgType MessageType, buf []byte)) {
+	s.Lock()
+	s.unsolicitedHandler = cb
+	s.Unlock()
 }
 
 func (s *Bus) GetDevice(address uint8) *Device {
 	return &Device{
 		address: address,
 		bus:     s,
+		Timeout: 1000,
 	}
 }
 
@@ -224,6 +237,7 @@ func (s *Bus) processInput(buffer []byte) error {
 			if err != nil {
 				return err
 			}
+
 			if crc == m {
 				msgType := MessageType(receivedPacket[0])
 
@@ -231,8 +245,14 @@ func (s *Bus) processInput(buffer []byte) error {
 					s.processCommandReply(receivedPacket[1:], nil)
 				} else if msgType == messageNack {
 					s.processCommandReply(receivedPacket[1:], ErrorNack)
-				} else if s.UnsolicitedHandler != nil {
-					s.UnsolicitedHandler(msgType, receivedPacket[1:])
+				} else {
+					s.Lock()
+					handler := s.unsolicitedHandler
+					s.Unlock()
+
+					if handler != nil {
+						handler(msgType, receivedPacket[1:])
+					}
 				}
 			}
 			s.receiverState = waitSync
@@ -287,11 +307,16 @@ func (s *Bus) processCommandReply(payload []byte, err error) {
 
 	if s.currentCommand != nil {
 		if s.currentCommand.ReplyChan != nil {
+
+			pCopy := make([]byte, len(payload))
+			copy(pCopy, payload)
+
 			s.currentCommand.ReplyChan <- commandReplyStruct{
 				Error:   err,
-				Payload: payload,
+				Payload: pCopy,
 			}
 		}
+
 		s.currentCommand = nil
 	}
 }
@@ -332,6 +357,20 @@ loop:
 
 		case <-timeoutChan:
 			s.processCommandReply(nil, ErrorTimeout)
+
+		case dev := <-s.disconnectChan:
+			dev.Lock()
+			dev.synced = false
+			dev.Unlock()
+
+			/* If we are currently processing a command for this device cancel it.
+			 * If not nothing needs to be done as potential next commands will not start
+			 * as the serial number is not known */
+			if s.currentCommand != nil {
+				if s.currentCommand.Device == dev {
+					s.processCommandReply(nil, ErrorNotConnected)
+				}
+			}
 
 		case cmd := <-cmdInChan:
 			s.currentCommand = cmd
@@ -377,14 +416,14 @@ func (s *Device) GetDeviceSerial() ([]byte, error) {
 	s.Unlock()
 
 	if !sync {
-		return s.SendCommand(messageID, nil, 1000)
+		return s.SendCommand(messageID, nil, s.Timeout)
 	}
 
-	return s.SendCommand(messageIDHash, nil, 1000)
+	return s.SendCommand(messageIDHash, nil, s.Timeout)
 }
 
 func (s *Device) GetSystemTime() (uint64, error) {
-	reply, err := s.SendCommand(messageSysTime, nil, 1000)
+	reply, err := s.SendCommand(messageSysTime, nil, s.Timeout)
 	if err != nil {
 		return 0, err
 	}
@@ -408,7 +447,7 @@ func (s *Device) syncTry() error {
 		syncRandom := random[:len]
 		rand.Read(syncRandom)
 
-		reply, err := s.SendCommand(messagePing, syncRandom, 1000) //TODO make configurable
+		reply, err := s.SendCommand(messagePing, syncRandom, s.Timeout)
 		if err != nil {
 			return err
 		} else if bytes.Compare(reply, syncRandom) != 0 {
@@ -417,6 +456,28 @@ func (s *Device) syncTry() error {
 	}
 
 	return nil
+}
+
+func (s *Device) Disconnect() {
+	s.bus.disconnectChan <- s
+}
+
+func (s *Device) ConnectForce(serial []byte) ([]byte, error) {
+	sCopy := make([]byte, len(serial))
+	copy(sCopy, serial)
+
+	compressedSerial := uint8(0)
+	for _, m := range sCopy {
+		compressedSerial ^= m
+	}
+
+	s.Lock()
+	s.compressedSerial = compressedSerial
+	s.fullSerial = sCopy
+	s.synced = true
+	s.Unlock()
+
+	return serial, nil
 }
 
 func (s *Device) Connect() ([]byte, error) {
@@ -486,6 +547,7 @@ func CreateProtocol(port io.ReadWriteCloser, key []byte) *Bus {
 	a := &Bus{}
 
 	a.cmdChan = make(chan (*commandStruct), 20)
+	a.disconnectChan = make(chan (*Device))
 	a.port = port
 	a.unlockKey = key
 
