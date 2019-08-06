@@ -68,6 +68,10 @@ func OpenChip(chip int) (*Chip, error) {
 	return g, nil
 }
 
+func (g *Chip) Close() error {
+	return g.file.Close()
+}
+
 func (g *Chip) GetChipInfo() ChipInfo {
 	return g.chipInfo
 }

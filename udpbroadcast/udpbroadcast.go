@@ -1,6 +1,7 @@
 package udpbroadcast
 
 import (
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -23,8 +24,9 @@ type UDPBroadcast struct {
 
 	closeChan chan (struct{})
 
-	TimeoutInterval time.Duration
-	ReceiveHandler  func(client interface{}, buf []byte)
+	TimeoutInterval      time.Duration
+	ReceiveHandler       func(client interface{}, buf []byte)
+	AllowDynamicNewPeers bool
 }
 
 func NewUDPBroadcast() (*UDPBroadcast, error) {
@@ -32,6 +34,7 @@ func NewUDPBroadcast() (*UDPBroadcast, error) {
 
 	u.clients = make(map[[18]byte]*Client)
 	u.TimeoutInterval = 30 * time.Second
+	u.AllowDynamicNewPeers = true
 
 	return u, nil
 }
@@ -51,11 +54,35 @@ func (u *UDPBroadcast) timeoutHandler() {
 			if m.timeoutInterval > 0 &&
 				time.Since(m.lastMessage) > m.timeoutInterval {
 
+				log.Println("Removed dynamic peer:", m.addr.String())
+
 				delete(u.clients, i)
 			}
 		}
 		u.Unlock()
 	}
+}
+
+func addrToKey(addr *net.UDPAddr, key *[18]byte) {
+	copy(key[:], addr.IP.To16())
+	key[16] = byte(addr.Port)
+	key[17] = byte(addr.Port >> 8)
+}
+
+func (u *UDPBroadcast) AddPeer(addr *net.UDPAddr, timeout time.Duration) *Client {
+	client := &Client{
+		addr:            addr,
+		timeoutInterval: timeout,
+	}
+
+	var key [18]byte
+	addrToKey(addr, &key)
+
+	u.Lock()
+	u.clients[key] = client
+	u.Unlock()
+
+	return client
 }
 
 func (u *UDPBroadcast) readHandler() {
@@ -69,22 +96,20 @@ func (u *UDPBroadcast) readHandler() {
 		buf := lbuf[:n]
 
 		var key [18]byte
-		copy(key[:], addr.IP.To16())
-		key[16] = byte(addr.Port)
-		key[17] = byte(addr.Port >> 8)
+		addrToKey(addr, &key)
 
 		u.RLock()
 		client := u.clients[key]
 		u.RUnlock()
 
 		if client == nil {
-			client = &Client{
-				addr:            addr,
-				timeoutInterval: u.TimeoutInterval,
+			if u.AllowDynamicNewPeers {
+				client = u.AddPeer(addr, u.TimeoutInterval)
+				log.Println("Added dynamic peer:", addr.String())
+			} else {
+				log.Println("Received spurious packet from unknown peer:", addr.String())
+				continue
 			}
-			u.Lock()
-			u.clients[key] = client
-			u.Unlock()
 		}
 
 		client.Lock()
