@@ -11,29 +11,6 @@ import (
 	"github.com/google/uuid"
 )
 
-type requestObserver struct {
-	http.ResponseWriter
-
-	bytes int
-	code  int
-}
-
-func (s *requestObserver) WriteHeader(code int) {
-	s.ResponseWriter.WriteHeader(code)
-	s.code = code
-}
-
-func (s *requestObserver) Write(b []byte) (int, error) {
-	n, err := s.ResponseWriter.Write(b)
-	s.bytes += n
-
-	if s.code == 0 {
-		s.code = 200
-	}
-
-	return n, err
-}
-
 // Logger is a function that can be used for logging. It has the same signature
 // as log.Printf
 type Logger func(string, ...interface{})
@@ -63,55 +40,91 @@ func (l *HTTPLog) logf(format string, param ...interface{}) {
 	}
 }
 
-// GetMiddleware returns a function that can be passed to Use to enable the logger.
-// For example: mux.Use(httpLog.GetMiddleware())
-func (l *HTTPLog) GetMiddleware() func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			begin := time.Now()
+type requestObserver struct {
+	http.ResponseWriter
+	http.Hijacker
 
-			id := ""
-			if len(l.CorrelationHeader) > 0 {
-				id = r.Header.Get(l.CorrelationHeader)
-			}
-			if len(id) == 0 {
-				id = uuid.New().String()
-			} else if len(id) > 40 {
-				id = id[0:40]
-			}
-			if len(l.CorrelationHeader) > 0 {
-				w.Header().Set(l.CorrelationHeader, id)
-			}
+	bytes int
+	code  int
+}
 
-			keeper := requestLogKeeper{
-				corrID:  id,
-				httpLog: l,
-			}
+func (s *requestObserver) WriteHeader(code int) {
+	s.ResponseWriter.WriteHeader(code)
+	s.code = code
+}
 
-			extendedCtx := context.WithValue(context.WithValue(r.Context(),
-				contextCorrelationID, id),
-				contextKeeper, &keeper)
+func (s *requestObserver) Write(b []byte) (int, error) {
+	n, err := s.ResponseWriter.Write(b)
+	s.bytes += n
 
-			ro := requestObserver{
-				ResponseWriter: w,
-			}
+	return n, err
+}
 
-			next.ServeHTTP(&ro, r.WithContext(extendedCtx))
-			duration := time.Now().Sub(begin)
+type handlerType struct {
+	http.Handler
 
-			keeper.Lock()
-			keeper.done = true
-			extraLog := keeper.output
-			keeper.output = nil
-			keeper.Unlock()
+	httpLog *HTTPLog
+	next    http.Handler
+}
 
-			extraLogString := ""
-			if len(extraLog) > 0 {
-				extraLogString = ": " + strings.Join(extraLog, ", ")
-			}
+func (h *handlerType) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	begin := time.Now()
 
-			l.logf("{%s}: HandlerCompleted [%s \"%s %s\" %d(%s) %dbytes %s \"%s\"]%s", id, r.RemoteAddr, r.Method, r.URL.RequestURI(), ro.code, http.StatusText(ro.code), ro.bytes, duration.String(), r.UserAgent(), extraLogString)
-		})
+	id := ""
+	if len(h.httpLog.CorrelationHeader) > 0 {
+		id = r.Header.Get(h.httpLog.CorrelationHeader)
+	}
+	if len(id) == 0 {
+		id = uuid.New().String()
+	} else if len(id) > 40 {
+		id = id[0:40]
+	}
+	if len(h.httpLog.CorrelationHeader) > 0 {
+		w.Header().Set(h.httpLog.CorrelationHeader, id)
+	}
+
+	keeper := requestLogKeeper{
+		corrID:  id,
+		httpLog: h.httpLog,
+	}
+
+	extendedCtx := context.WithValue(context.WithValue(r.Context(),
+		contextCorrelationID, id),
+		contextKeeper, &keeper)
+
+	ro := requestObserver{
+		ResponseWriter: w,
+		code:           200,
+	}
+
+	// Required for websocket support
+	switch wt := w.(type) {
+	case http.Hijacker:
+		ro.Hijacker = wt
+	}
+
+	h.next.ServeHTTP(&ro, r.WithContext(extendedCtx))
+	duration := time.Now().Sub(begin)
+
+	keeper.Lock()
+	keeper.done = true
+	extraLog := keeper.output
+	keeper.output = nil
+	keeper.Unlock()
+
+	extraLogString := ""
+	if len(extraLog) > 0 {
+		extraLogString = ": " + strings.Join(extraLog, ", ")
+	}
+
+	h.httpLog.logf("{%s}: HandlerCompleted [%s \"%s %s\" %d(%s) %dbytes %s \"%s\"]%s", id, r.RemoteAddr, r.Method, r.URL.RequestURI(), ro.code, http.StatusText(ro.code), ro.bytes, duration.String(), r.UserAgent(), extraLogString)
+}
+
+// GetHandler returns a function that goes in between the server and the real handler
+func (l *HTTPLog) GetHandler(next http.Handler) http.Handler {
+	return &handlerType{
+		next:    next,
+		httpLog: l,
 	}
 }
 
@@ -135,7 +148,7 @@ func CorrelationIDFromRequest(r *http.Request) string {
 
 // LogfFromRequest returns a function with fmt.Printf signature that will write to the log associated
 // with the request
-func LogfFromRequest(r *http.Request) func(format string, param ...interface{}) {
+func LogfFromRequest(r *http.Request) Logger {
 	switch keeper := r.Context().Value(contextKeeper).(type) {
 	case *requestLogKeeper:
 		return func(format string, param ...interface{}) {
@@ -153,7 +166,5 @@ func LogfFromRequest(r *http.Request) func(format string, param ...interface{}) 
 		}
 	}
 
-	return func(format string, param ...interface{}) {
-		panic("Request has no logger attached")
-	}
+	return nil
 }
