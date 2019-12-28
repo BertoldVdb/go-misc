@@ -30,6 +30,7 @@ const ErrorImageEncryptionMissing = Error("Encryption Missing")
 const ErrorBadAlignment = Error("Bad Alignment")
 const ErrorUnsupportedResult = Error("Unsupported result")
 const ErrorBootFailed = Error("Boot failed")
+const ErrorBlobMismatch = Error("Signed and unsigned blob don't match")
 
 var imageErrors = []error{
 	nil,
@@ -47,6 +48,7 @@ var imageErrors = []error{
 	ErrorParitionDoesNotExist,
 	ErrorImageEncryptionMissing,
 	ErrorBadAlignment,
+	ErrorBlobMismatch,
 }
 
 func getError(result byte) error {
@@ -58,6 +60,35 @@ func getError(result byte) error {
 
 type Bootloader struct {
 	device *serialpacket.Device
+}
+
+func GetVersionBlobFromFile(filename string) ([]byte, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf [257]byte
+
+	n, err := file.Read(buf[:])
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+
+	if n < 2 {
+		return nil, io.EOF
+	}
+
+	if buf[0] != 0xFF {
+		return nil, nil
+	}
+
+	length := int(buf[1])
+	if n-2 < length {
+		return nil, io.EOF
+	}
+
+	return buf[2 : 2+length], nil
 }
 
 func (b *Bootloader) LoadImage(filename string, partition int) error {
@@ -123,6 +154,19 @@ func (b *Bootloader) GetSecureCounter() (uint32, error) {
 	return binary.BigEndian.Uint32(reply), nil
 }
 
+func (b *Bootloader) GetRandom() (uint32, error) {
+	reply, err := b.device.SendCommand('R', nil, 500)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(reply) != 4 {
+		return 0, ErrrorProtocol
+	}
+
+	return binary.BigEndian.Uint32(reply), nil
+}
+
 func (b *Bootloader) CheckImage(partition int) (uint32, error) {
 	pl := []byte{byte(partition)}
 	reply, err := b.device.SendCommand('v', pl, 500)
@@ -140,6 +184,16 @@ func (b *Bootloader) CheckImage(partition int) (uint32, error) {
 	}
 
 	return version, getError(reply[0])
+}
+
+func (b *Bootloader) GetVersionBlob(partition int) ([]byte, error) {
+	pl := []byte{byte(partition), 1}
+	reply, err := b.device.SendCommand('v', pl, 500)
+	if err != nil {
+		return nil, err
+	}
+
+	return reply, nil
 }
 
 func (b *Bootloader) SetAddress(addr uint8) error {
