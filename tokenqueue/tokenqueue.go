@@ -22,9 +22,9 @@ type Queue struct {
 	sync.Mutex
 	closed bool
 
-	maxCapacity    int
-	targetCapacity int
-	removeDelta    int
+	maxCapacity     int
+	targetCapacity  int
+	currentCapacity int
 
 	availableTokens chan (Token)
 	committedTokens chan (Token)
@@ -39,6 +39,7 @@ func NewQueue(capacity int, factory TokenFactory) *Queue {
 	q := &Queue{
 		maxCapacity:     capacity,
 		targetCapacity:  capacity,
+		currentCapacity: capacity,
 		availableTokens: make(chan (Token), capacity),
 		committedTokens: make(chan (Token), capacity),
 		discardTokens:   make(chan (Token), capacity),
@@ -79,9 +80,9 @@ func (q *Queue) GetAvailableToken(ctx context.Context) (Token, error) {
 
 		/* Check if tokens need to be removed from circulation */
 		q.Lock()
-		if q.removeDelta > 0 {
+		if q.currentCapacity > q.targetCapacity {
 			q.discardTokens <- token
-			q.removeDelta--
+			q.currentCapacity--
 			q.Unlock()
 		} else {
 			q.Unlock()
@@ -192,25 +193,17 @@ func (q *Queue) EnableDisableTokens(amount int) bool {
 		return false
 	}
 
-	if q.targetCapacity == amount {
-		return true
-	}
-
-	diff := amount - q.targetCapacity
-
 	q.targetCapacity = amount
 
-	if diff > 0 {
-		/* Make more available, so move n tokens from discard to available */
-		for i := 0; i < diff; i++ {
-			token, ok := <-q.discardTokens
-			assert(ok, "DiscardTokens channel was closed, although we have the lock on q.closed and tested for it...")
-			q.availableTokens <- token
-		}
-	} else {
-		/* Take some out of circulation. We set a flag that will reduce the actual capacity when available tokens are requested */
-		q.removeDelta = -diff
+	/* If needed, make more available, so move n tokens from discard to available */
+	for q.currentCapacity < q.targetCapacity {
+		token, ok := <-q.discardTokens
+		assert(ok, "DiscardTokens channel was closed, although we have the lock on q.closed and tested for it...")
+		q.availableTokens <- token
+		q.currentCapacity++
 	}
+
+	/* If currentCapacity > targetCapacity GetAvailableToken() will discard tokens untill this is not the case anymore */
 
 	return true
 }
