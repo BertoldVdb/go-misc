@@ -34,25 +34,24 @@ type Queue struct {
 //TokenFactory is a function that is called when creating a queue. It should return pointers to tokens
 type TokenFactory func() Token
 
-//NewQueue creates the tokenqueue with a given capacity and factory
-func NewQueue(capacity int, factory TokenFactory) *Queue {
+//NewQueue creates the tokenqueue with a given maximum capacity, initial capacity and factory
+func NewQueue(maximumCapacity int, initialCapacity int, factory TokenFactory) *Queue {
 	q := &Queue{
-		maxCapacity:     capacity,
-		targetCapacity:  capacity,
-		currentCapacity: capacity,
-		availableTokens: make(chan (Token), capacity),
-		committedTokens: make(chan (Token), capacity),
-		discardTokens:   make(chan (Token), capacity),
+		maxCapacity:     maximumCapacity,
+		availableTokens: make(chan (Token), maximumCapacity),
+		committedTokens: make(chan (Token), maximumCapacity),
+		discardTokens:   make(chan (Token), maximumCapacity),
 	}
 
-	for i := 0; i < capacity; i++ {
-		t := factory()
-		if t == nil {
+	for i := 0; i < maximumCapacity; i++ {
+		token := factory()
+		if token == nil {
 			return nil
 		}
-
-		q.availableTokens <- t
+		q.discardTokens <- token
 	}
+
+	q.EnableDisableTokens(initialCapacity)
 
 	return q
 }

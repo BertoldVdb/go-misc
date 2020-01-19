@@ -32,7 +32,7 @@ func (c *Command) Cleanup() {
 func runTestCheckCleanup(capacity int, t *testing.T, work func(t *testing.T, q *Queue)) {
 	totalCleaned := uint32(0)
 
-	q := NewQueue(capacity, func() Token {
+	q := NewQueue(capacity, capacity, func() Token {
 		return &Command{t: t, totalCleaned: &totalCleaned}
 	})
 
@@ -131,7 +131,7 @@ func TestTokenQueueUnUsed(t *testing.T) {
 }
 
 func TestTokenQueueBadFactory(t *testing.T) {
-	q := NewQueue(5, func() Token {
+	q := NewQueue(5, 1, func() Token {
 		return nil
 	})
 
@@ -152,7 +152,7 @@ func TestAssert(t *testing.T) {
 }
 
 func TestTimeout(t *testing.T) {
-	q := NewQueue(1, func() Token {
+	q := NewQueue(1, 1, func() Token {
 		return &Command{t: t}
 	})
 
@@ -205,11 +205,11 @@ func testChangeCapacity(t *testing.T, q *Queue, capacity int) {
 }
 
 func TestEnableDisable(t *testing.T) {
-	q := NewQueue(10, func() Token {
+	q := NewQueue(10, 2, func() Token {
 		return &Command{t: t}
 	})
 
-	if measureCapcity(q) != 10 {
+	if measureCapcity(q) != 2 {
 		t.Error("Initial capacity was not correct")
 	}
 
