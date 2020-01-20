@@ -20,6 +20,7 @@ type Logger func(string, ...interface{})
 type HTTPLog struct {
 	LogOut     Logger
 	ServerName string
+	LogName    string
 
 	CorrelationHeader string
 }
@@ -34,9 +35,10 @@ const (
 func (l *HTTPLog) logf(format string, param ...interface{}) {
 	if l.LogOut != nil {
 		var p []interface{}
+		p = append(p, l.LogName)
 		p = append(p, l.ServerName)
 		p = append(p, param...)
-		l.LogOut("HTTPd [%s]: "+format, p...)
+		l.LogOut("%s [%s]: "+format, p...)
 	}
 }
 
@@ -117,11 +119,18 @@ func (h *handlerType) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		extraLogString = ": " + strings.Join(extraLog, ", ")
 	}
 
-	h.httpLog.logf("{%s}: HandlerCompleted [%s \"%s %s\" %d(%s) %dbytes %s \"%s\"]%s", id, r.RemoteAddr, r.Method, r.URL.RequestURI(), ro.code, http.StatusText(ro.code), ro.bytes, duration.String(), r.UserAgent(), extraLogString)
+	h.httpLog.logf("{%s}: HandlerCompleted [%s \"%s %s HTTP/%d.%d\" %d(%s) %dbytes %s \"%s\"]%s", id, r.RemoteAddr, r.Method, r.URL.RequestURI(), r.ProtoMajor, r.ProtoMinor, ro.code, http.StatusText(ro.code), ro.bytes, duration.String(), r.UserAgent(), extraLogString)
 }
 
 // GetHandler returns a function that goes in between the server and the real handler
 func (l *HTTPLog) GetHandler(next http.Handler) http.Handler {
+	if l.LogName == "" {
+		l.LogName = "http"
+	}
+	if l.ServerName == "" {
+		l.ServerName = "Unset"
+	}
+
 	return &handlerType{
 		next:    next,
 		httpLog: l,
