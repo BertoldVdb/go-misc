@@ -25,9 +25,13 @@ func (c *CRC) Result32() uint32 {
 }
 
 //ResultBytes converts the CRC result to a byte array with specified endianness
-func (c *CRC) ResultBytes(bigEndian bool) []byte {
+func (c *CRC) ResultBytes(output []byte, bigEndian bool) []byte {
+	if c.params.Len == 0 {
+		return nil
+	}
+
+	output = output[:c.ResultLenBytes()]
 	result := c.Result64()
-	output := make([]byte, (c.params.Len-1)/8+1)
 
 	for i := 0; i < len(output); i++ {
 		if bigEndian {
@@ -39,4 +43,12 @@ func (c *CRC) ResultBytes(bigEndian bool) []byte {
 	}
 
 	return output
+}
+
+//ResultLenBytes returns the length of the CRC in bytes
+func (c *CRC) ResultLenBytes() int {
+	if c.params.Len == 0 {
+		return 0
+	}
+	return int((c.params.Len-1)/8 + 1)
 }

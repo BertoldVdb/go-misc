@@ -1,6 +1,12 @@
 package multicrc
 
 var (
+	//CrcNone describes an empty CRC
+	CrcNone = &Params{
+		Len:  0,
+		Name: "CrcNone",
+	}
+
 	//Crc16A describes a 16 bit long CRC named 'A'
 	Crc16A = &Params{
 		Len:           16,

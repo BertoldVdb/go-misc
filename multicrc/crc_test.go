@@ -21,12 +21,13 @@ func TestCRCs(t *testing.T) {
 		t.Error("Result is wrong")
 	}
 
-	be := crc.ResultBytes(true)
+	var output [2]byte
+	be := crc.ResultBytes(output[:], true)
 	if !bytes.Equal(be, []byte{0xf, 0xb0}) {
 		t.Error("Big endian result is wrong")
 	}
 
-	le := crc.ResultBytes(false)
+	le := crc.ResultBytes(output[:], false)
 	if !bytes.Equal(le, []byte{0xb0, 0xf}) {
 		t.Error("Little endian result is wrong")
 	}
