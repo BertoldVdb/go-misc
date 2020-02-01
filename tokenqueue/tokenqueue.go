@@ -93,7 +93,35 @@ func (q *Queue) GetAvailableToken(ctx context.Context) (Token, error) {
 //GetCommittedToken will return a committed token to the processor
 func (q *Queue) GetCommittedToken(ctx context.Context) (Token, error) {
 	return q.tokenFromChannel(ctx, q.committedTokens)
+}
 
+func (q *Queue) getChannelReader(ctx context.Context, f func(context.Context) (Token, error)) <-chan (Token) {
+	c := make(chan (Token))
+
+	go func() {
+		defer close(c)
+
+		for {
+			t, err := f(ctx)
+			if err != nil {
+				return
+			}
+
+			c <- t
+		}
+	}()
+
+	return c
+}
+
+//GetAvailableTokenChan returns a channel from which available tokens can be read
+func (q *Queue) GetAvailableTokenChan(ctx context.Context) <-chan (Token) {
+	return q.getChannelReader(ctx, q.GetAvailableToken)
+}
+
+//GetCommittedTokenChan returns a channel from which committed tokens can be read
+func (q *Queue) GetCommittedTokenChan(ctx context.Context) <-chan (Token) {
+	return q.getChannelReader(ctx, q.GetCommittedToken)
 }
 
 func (q *Queue) tokenToChannel(channel chan (Token), t Token) error {

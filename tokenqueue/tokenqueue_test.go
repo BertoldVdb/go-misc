@@ -80,12 +80,28 @@ func testWorker(test *testing.T, waitChain chan (int), id int, q *Queue) {
 	defer func() { waitChain <- id }()
 	ctx := context.Background()
 
+	var c <-chan (Token)
+	if id%2 > 0 {
+		c = q.GetCommittedTokenChan(ctx)
+	}
+
 	for {
 		log.Println(id, "Requesting committed token")
-		t, err := q.GetCommittedToken(ctx)
-		if err != nil {
-			log.Println(id, "Error in worker", err)
-			break
+		var err error
+		var t Token
+		if c == nil {
+			t, err = q.GetCommittedToken(ctx)
+			if err != nil {
+				log.Println(id, "Error in worker", err)
+				break
+			}
+		} else {
+			var ok bool
+			t, ok = <-c
+			if !ok {
+				log.Println(id, "Error in worker (via channel close)")
+				break
+			}
 		}
 		log.Println(id, "Got committed token, working with it")
 
@@ -104,12 +120,28 @@ func testClient(test *testing.T, waitChain chan (int), id int, q *Queue) {
 	defer func() { waitChain <- id }()
 	ctx := context.Background()
 
+	var c <-chan (Token)
+	if id%2 > 0 {
+		c = q.GetAvailableTokenChan(ctx)
+	}
+
 	for {
 		log.Println(id, "Requesting available token")
-		t, err := q.GetAvailableToken(ctx)
-		if err != nil {
-			log.Println(id, "Error in client", err)
-			break
+		var err error
+		var t Token
+		if c == nil {
+			t, err = q.GetAvailableToken(ctx)
+			if err != nil {
+				log.Println(id, "Error in client", err)
+				break
+			}
+		} else {
+			var ok bool
+			t, ok = <-c
+			if !ok {
+				log.Println(id, "Error in client (via channel close)")
+				break
+			}
 		}
 		log.Println(id, "Got available token, working on it")
 
