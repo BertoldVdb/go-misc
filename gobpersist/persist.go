@@ -24,9 +24,7 @@ type GobPersist struct {
 	// SaveInterval is the minimum interval between conditional saves.
 	SaveInterval time.Duration
 
-	buffer  bytes.Buffer
-	encoder *gob.Encoder
-	decoder *gob.Decoder
+	buffer bytes.Buffer
 
 	nextSave time.Time
 }
@@ -50,10 +48,6 @@ func (g *GobPersist) Load() error {
 	g.Lock()
 	defer g.Unlock()
 
-	if g.decoder == nil {
-		g.decoder = gob.NewDecoder(&g.buffer)
-	}
-
 	g.buffer.Truncate(0)
 	file, err := os.Open(g.Filename)
 	if err != nil {
@@ -63,7 +57,7 @@ func (g *GobPersist) Load() error {
 
 	_, err = g.buffer.ReadFrom(file)
 	if err == nil {
-		err = g.decoder.Decode(g.Target)
+		err = gob.NewDecoder(&g.buffer).Decode(g.Target)
 	}
 
 	return err
@@ -80,12 +74,8 @@ func (g *GobPersist) Save() error {
 	g.RLock()
 	defer g.RUnlock()
 
-	if g.encoder == nil {
-		g.encoder = gob.NewEncoder(&g.buffer)
-	}
-
 	g.buffer.Truncate(0)
-	err := g.encoder.Encode(g.Target)
+	err := gob.NewEncoder(&g.buffer).Encode(g.Target)
 	if err != nil {
 		goto done
 	}

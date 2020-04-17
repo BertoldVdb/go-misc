@@ -28,13 +28,19 @@ func TestSaveLoad(t *testing.T) {
 	value := 1
 	gob := setupGob(dir, &value)
 
-	if gob.Save() != nil {
-		t.Error("Save failed")
+	/* Save multiple times */
+	for i := 0; i < 10; i++ {
+		if gob.Save() != nil {
+			t.Error("Save failed")
+		}
 	}
 
-	value = 0
-	if gob.Load() != nil {
-		t.Error("Load failed")
+	/* Load multiple times */
+	for i := 0; i < 10; i++ {
+		value = 0
+		if gob.Load() != nil {
+			t.Error("Load failed")
+		}
 	}
 
 	if value != 1 {
