@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io/ioutil"
 	"os"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -14,7 +13,6 @@ import (
 // GobPersist is a simple helper package that allows saving and loading a target to a file using gob.
 // It also handles timed saves
 type GobPersist struct {
-	sync.RWMutex
 	modified uint32
 
 	// Filename is the name of the file to use to persist the information
@@ -45,9 +43,6 @@ func (g *GobPersist) Load() error {
 		return ErrorNoFilename
 	}
 
-	g.Lock()
-	defer g.Unlock()
-
 	g.buffer.Truncate(0)
 	file, err := os.Open(g.Filename)
 	if err != nil {
@@ -70,9 +65,6 @@ func (g *GobPersist) Save() error {
 	}
 
 	tmpName := g.Filename + ".tmp"
-
-	g.RLock()
-	defer g.RUnlock()
 
 	g.buffer.Truncate(0)
 	err := gob.NewEncoder(&g.buffer).Encode(g.Target)
@@ -111,13 +103,9 @@ func (g *GobPersist) SaveConditional(modified bool) error {
 	var err error
 
 	if atomic.CompareAndSwapUint32(&g.modified, 1, 0) {
-		g.RLock()
-
 		if time.Now().After(g.nextSave) {
 			err = g.Save()
 		}
-
-		g.RUnlock()
 	}
 
 	return err

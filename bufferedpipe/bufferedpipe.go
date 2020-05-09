@@ -3,14 +3,16 @@ package bufferedpipe
 import (
 	"bytes"
 	"errors"
-	"sync"
+    "io"
+    "sync"
 )
 
 // BufferedPipe is an io.ReadWriteCloser. What is written via the writer comes out via the Reader.
 // A configurable buffer is present in between. Writing behaviour can be configured both in blocking
 // and non blocking ways.
 type BufferedPipe struct {
-	sync.Mutex
+    io.ReadWriteCloser
+    sync.Mutex
 	buffer bytes.Buffer
 
 	canReadSignal  chan (struct{})
@@ -45,6 +47,10 @@ func signalChannel(c chan (struct{})) {
 }
 
 func (b *BufferedPipe) remainingCapacity() int {
+    if b.maximumCapacity <= 0 {
+        return 0;
+    }
+
 	result := b.maximumCapacity - b.buffer.Len()
 	assert(result >= 0, "Maximum capacity exceeded")
 	return result
@@ -82,7 +88,7 @@ func (b *BufferedPipe) Clear() {
 
 // Close closes the pipe. Read calls will return ErrorClosed when the pipe is exhausted.
 // Write call will return ErrorClosed right away
-func (b *BufferedPipe) Close() {
+func (b *BufferedPipe) Close() error {
 	b.Lock()
 	defer b.Unlock()
 
@@ -92,6 +98,7 @@ func (b *BufferedPipe) Close() {
 	signalChannel(b.canReadSignal)
 	signalChannel(b.canWriteSignal)
 
+    return nil
 }
 
 func (b *BufferedPipe) writeNonBlocking(p []byte) (int, error) {

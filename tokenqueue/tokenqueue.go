@@ -29,6 +29,9 @@ type Queue struct {
 	availableTokens chan (Token)
 	committedTokens chan (Token)
 	discardTokens   chan (Token)
+	closeTokens     chan (Token)
+
+	validTokens []Token
 }
 
 //TokenFactory is a function that is called when creating a queue. It should return pointers to tokens
@@ -41,6 +44,7 @@ func NewQueue(maximumCapacity int, initialCapacity int, factory TokenFactory) *Q
 		availableTokens: make(chan (Token), maximumCapacity),
 		committedTokens: make(chan (Token), maximumCapacity),
 		discardTokens:   make(chan (Token), maximumCapacity),
+		closeTokens:     make(chan (Token)),
 	}
 
 	for i := 0; i < maximumCapacity; i++ {
@@ -49,6 +53,7 @@ func NewQueue(maximumCapacity int, initialCapacity int, factory TokenFactory) *Q
 			return nil
 		}
 		q.discardTokens <- token
+		q.validTokens = append(q.validTokens, token)
 	}
 
 	q.EnableDisableTokens(initialCapacity)
@@ -107,7 +112,10 @@ func (q *Queue) getChannelReader(ctx context.Context, f func(context.Context) (T
 				return
 			}
 
-			c <- t
+			select {
+			case c <- t:
+			case q.closeTokens <- t:
+			}
 		}
 	}()
 
@@ -130,11 +138,19 @@ func (q *Queue) tokenToChannel(channel chan (Token), t Token) error {
 
 	/* This never blocks, if the queue is closed then we put the tokens in a dedicated discard channel */
 	if !q.closed {
-		channel <- t
+		select {
+		case channel <- t:
+		default:
+			panic("Queue is full. Token not used correctly")
+		}
 		return nil
 	}
 
-	q.discardTokens <- t
+	select {
+	case q.discardTokens <- t:
+	default:
+		panic("Discard queue is full. Token not used correctly")
+	}
 	return ErrorClosed
 }
 
@@ -154,7 +170,24 @@ func assert(condition bool, msg string) {
 	}
 }
 
-func drainAndCloseChannel(channel chan (Token), amount int) int {
+func (q *Queue) cleanupToken(t Token) {
+	found := false
+	if t != nil {
+		for i := range q.validTokens {
+			if q.validTokens[i] == t {
+				q.validTokens[i] = nil
+				found = true
+				break
+			}
+		}
+	}
+
+	assert(found, "Token not in a state where it can be cleaned")
+
+	t.Cleanup()
+}
+
+func (q *Queue) drainAndCloseChannel(channel chan (Token), amount int) int {
 	count := 0
 
 	if amount < 0 {
@@ -162,7 +195,7 @@ func drainAndCloseChannel(channel chan (Token), amount int) int {
 		for {
 			select {
 			case t := <-channel:
-				t.Cleanup()
+				q.cleanupToken(t)
 				count++
 			default:
 				break loop
@@ -171,7 +204,7 @@ func drainAndCloseChannel(channel chan (Token), amount int) int {
 	} else {
 		for ; amount > 0; amount-- {
 			t := <-channel
-			t.Cleanup()
+			q.cleanupToken(t)
 			count++
 		}
 	}
@@ -194,15 +227,28 @@ func (q *Queue) Close() {
 
 	capacityRemaining := q.maxCapacity
 
+	/* Discard all tokens stuck in channel readers */
+	go func() {
+		for {
+			t, ok := <-q.closeTokens
+			if !ok {
+				return
+			}
+			q.discardTokens <- t
+		}
+	}()
+
 	/* Drain the tokens in the round robbin channels */
-	capacityRemaining -= drainAndCloseChannel(q.availableTokens, -1)
-	capacityRemaining -= drainAndCloseChannel(q.committedTokens, -1)
+	capacityRemaining -= q.drainAndCloseChannel(q.availableTokens, -1)
+	capacityRemaining -= q.drainAndCloseChannel(q.committedTokens, -1)
 
 	/* If a producer or consumer commits a token when the queue is closed, they are sent
 	   to this channel when committed or released so they can be reclaimed */
-	capacityRemaining -= drainAndCloseChannel(q.discardTokens, capacityRemaining)
+	capacityRemaining -= q.drainAndCloseChannel(q.discardTokens, capacityRemaining)
 
 	assert(capacityRemaining == 0, "capacityRemaining was not 0")
+
+	close(q.closeTokens)
 }
 
 //EnableDisableTokens is used to temporary change the amount of tokens that are available
