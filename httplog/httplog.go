@@ -21,6 +21,7 @@ type HTTPLog struct {
 	LogOut     Logger
 	ServerName string
 	LogName    string
+	SkipInfo   bool
 
 	CorrelationHeader string
 }
@@ -34,11 +35,15 @@ const (
 
 func (l *HTTPLog) logf(format string, param ...interface{}) {
 	if l.LogOut != nil {
-		var p []interface{}
-		p = append(p, l.LogName)
-		p = append(p, l.ServerName)
-		p = append(p, param...)
-		l.LogOut("%s [%s]: "+format, p...)
+		if l.SkipInfo {
+			l.LogOut(format, param...)
+		} else {
+			var p []interface{}
+			p = append(p, l.LogName)
+			p = append(p, l.ServerName)
+			p = append(p, param...)
+			l.LogOut("%s [%s]: "+format, p...)
+		}
 	}
 }
 
@@ -119,7 +124,7 @@ func (h *handlerType) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		extraLogString = ": " + strings.Join(extraLog, ", ")
 	}
 
-	h.httpLog.logf("{%s}: HandlerCompleted [%s \"%s %s HTTP/%d.%d\" %d(%s) %dbytes %s \"%s\"]%s", id, r.RemoteAddr, r.Method, r.URL.RequestURI(), r.ProtoMajor, r.ProtoMinor, ro.code, http.StatusText(ro.code), ro.bytes, duration.String(), r.UserAgent(), extraLogString)
+	h.httpLog.logf("{%s}: HC [%s \"%s %s HTTP/%d.%d\" %d(%s) %dbytes %s \"%s\"]%s", id, r.RemoteAddr, r.Method, r.URL.RequestURI(), r.ProtoMajor, r.ProtoMinor, ro.code, http.StatusText(ro.code), ro.bytes, duration.String(), r.UserAgent(), extraLogString)
 }
 
 // GetHandler returns a function that goes in between the server and the real handler

@@ -34,6 +34,14 @@ func (c *CloseFlag) Chan() <-chan (struct{}) {
 	return c.closeChan
 }
 
+// IsClosed returns if the flag was already closed
+func (c *CloseFlag) IsClosed() bool {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+
+	return c.closed
+}
+
 // Close closes the CloseFlag. It can safely be called multiple times
 func (c *CloseFlag) Close() error {
 	c.mutex.Lock()
