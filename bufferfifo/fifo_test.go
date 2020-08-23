@@ -5,14 +5,16 @@ import (
 	"math/rand"
 	"testing"
 	"time"
+
+	pdu "github.com/BertoldVdb/go-misc/pdubuf"
 )
 
 func writer(fifo *FIFO) {
 	count := uint32(0)
 	for {
 		time.Sleep(time.Duration(rand.Float32()*200) * time.Microsecond)
-		buf := make([]byte, 4)
-		binary.LittleEndian.PutUint32(buf, count)
+		buf := pdu.Alloc(0, 4, 4)
+		binary.LittleEndian.PutUint32(buf.Buf(), count)
 		fifo.Push(buf)
 		count++
 
@@ -31,7 +33,7 @@ func reader(t *testing.T, fifo *FIFO) {
 			continue
 		}
 
-		if binary.LittleEndian.Uint32(buf) != count {
+		if binary.LittleEndian.Uint32(buf.Buf()) != count {
 			t.Error("Wrong element returned in pop")
 		}
 		count++
@@ -72,41 +74,11 @@ func TestAssert(t *testing.T) {
 	assert(false, "Assert failed")
 }
 
-func TestCreate(t *testing.T) {
-	fifo := New(16)
-	buf1 := fifo.PopOrCreate(12)
-	if len(buf1) != 12 || cap(buf1) != 16 {
-		t.Error("Returned buffer with wrong size (1)")
-	}
-
-	buf2 := fifo.PopOrCreate(24)
-	if len(buf2) != 24 || cap(buf2) != 32 {
-		t.Error("Returned buffer with wrong size (2)")
-	}
-
-	fifo.Push(buf1[:2])
-	fifo.Push(buf2[:2])
-
-	buf3 := fifo.PopOrCreate(12)
-	if len(buf3) != 12 || cap(buf3) != 16 {
-		t.Error("Returned buffer with wrong size (3)")
-	}
-
-	buf4 := fifo.PopOrCreate(12)
-	if len(buf4) != 12 || cap(buf4) != 32 {
-		t.Error("Returned buffer with wrong size (4)")
-	}
-
-	if &buf1[0] != &buf3[0] || &buf2[0] != &buf4[0] {
-		t.Error("New buffers were created and this wat not needed")
-	}
-}
-
 func TestClear(t *testing.T) {
 	fifo := New(16)
-	fifo.Push(make([]byte, 1))
-	fifo.Push(make([]byte, 1))
-	fifo.Push(make([]byte, 1))
+	fifo.Push(pdu.Alloc(0, 1, 1))
+	fifo.Push(pdu.Alloc(0, 1, 1))
+	fifo.Push(pdu.Alloc(0, 1, 1))
 
 	if fifo.Len() != 3 {
 		t.Error("Wrong length returned after 3 insert")
@@ -126,7 +98,7 @@ func TestClear(t *testing.T) {
 		t.Error("Wrong length returned after clear")
 	}
 
-	fifo.Push(make([]byte, 1))
+	fifo.Push(pdu.Alloc(0, 1, 1))
 
 	if fifo.Len() != 1 {
 		t.Error("Wrong length returned after clear and insert")

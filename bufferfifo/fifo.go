@@ -1,13 +1,17 @@
 package bufferfifo
 
-import "sync"
+import (
+	"sync"
+
+	pdu "github.com/BertoldVdb/go-misc/pdubuf"
+)
 
 // FIFO is a simple queue designed to queue packets. It can also be used as a freelist using the
 // PopOrCreate function
 type FIFO struct {
 	sync.Mutex
 
-	ring [][]byte
+	ring []*pdu.PDU
 
 	readPointer  int
 	writePointer int
@@ -23,7 +27,7 @@ func New(allocSize int) *FIFO {
 	}
 
 	return &FIFO{
-		ring:      make([][]byte, allocSize),
+		ring:      make([]*pdu.PDU, allocSize),
 		allocSize: allocSize,
 	}
 }
@@ -35,7 +39,7 @@ func (b *FIFO) incrementPointer(ptr *int) {
 	}
 }
 
-func (b *FIFO) popInternal() []byte {
+func (b *FIFO) popInternal() *pdu.PDU {
 	if b.elements == 0 {
 		/* Empty... */
 		return nil
@@ -50,30 +54,11 @@ func (b *FIFO) popInternal() []byte {
 }
 
 // Pop removes and returns the first element of the FIFO. It there is no element nil is returned
-func (b *FIFO) Pop() []byte {
+func (b *FIFO) Pop() *pdu.PDU {
 	b.Lock()
 	defer b.Unlock()
 
 	return b.popInternal()
-}
-
-func (b *FIFO) newBuf(minLength int) []byte {
-	n := ((minLength / b.allocSize) + 1) * b.allocSize
-	return make([]byte, n)
-}
-
-// PopOrCreate delivers a buffer with the requested length. It may take it from the FIFO
-// but may also allocate a new one if this is not possible.
-func (b *FIFO) PopOrCreate(length int) []byte {
-	buf := b.Pop()
-
-	if cap(buf) < length {
-		buf = b.newBuf(length)
-	}
-
-	buf = buf[:length]
-
-	return buf
 }
 
 func (b *FIFO) reallocateInternal() {
@@ -82,7 +67,7 @@ func (b *FIFO) reallocateInternal() {
 		return
 	}
 
-	newRing := make([][]byte, n)
+	newRing := make([]*pdu.PDU, n)
 
 	wrIndex := 0
 	for {
@@ -110,7 +95,7 @@ func (b *FIFO) Reallocate() {
 }
 
 // Push inserts buf at the end of the FIFO. Returns number of elements in FIFO.
-func (b *FIFO) Push(buf []byte) int {
+func (b *FIFO) Push(buf *pdu.PDU) int {
 	assert(buf != nil, "Cannot queue nil buffers")
 
 	b.Lock()
