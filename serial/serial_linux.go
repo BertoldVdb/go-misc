@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -110,6 +111,22 @@ func (port *serialPortLinux) setPinIoctl(enabled bool, pin int) error {
 	if err != 0 || r < 0 {
 		return os.NewSyscallError("TIOCMBIC/TIOCMBIS", err)
 	}
+	return nil
+}
+
+func (port *serialPortLinux) DoBreak(duration time.Duration) error {
+	r, _, err := syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(unix.TIOCSBRK), 0)
+	if err != 0 || r < 0 {
+		return os.NewSyscallError("TIOCSBRK", err)
+	}
+
+	time.Sleep(duration)
+
+	r, _, err = syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(unix.TIOCCBRK), 0)
+	if err != 0 || r < 0 {
+		return os.NewSyscallError("TIOCCBRK", err)
+	}
+
 	return nil
 }
 

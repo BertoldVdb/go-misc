@@ -43,6 +43,7 @@ func (p *PDU) reallocInternal(leftCap int, dataLen int, dataCap int, copyData bo
 	totalCap := leftCap + dataCap
 	if cap(p.buf) < totalCap || (cap(p.buf)*64 >= totalCap && totalCap > 512) {
 		newPDU := Alloc(leftCap, dataLen, dataCap)
+		newPDU.state = p.state
 
 		if copyData {
 			newPDU.Append(p.Buf()...)
@@ -59,6 +60,7 @@ func (p *PDU) reallocInternal(leftCap int, dataLen int, dataCap int, copyData bo
 		buf:            buf,
 		leftIndex:      leftCap,
 		intiailLeftCap: leftCap,
+		state:          p.state,
 	}
 
 	if copyData {

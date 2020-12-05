@@ -1,6 +1,9 @@
 package serial
 
-import "io"
+import (
+	"io"
+	"time"
+)
 
 // Port is an extended io.ReadWriteCloser that also allows changing
 // some serial port specific settings
@@ -15,6 +18,9 @@ type Port interface {
 	SetDTR(enabled bool) error
 	SetRTS(enabled bool) error
 	GetPins() (PortPins, error)
+
+	/* Break */
+	DoBreak(duration time.Duration) error
 }
 
 // PortOptions is a parameter struct for Open
