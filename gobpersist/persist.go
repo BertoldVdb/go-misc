@@ -6,14 +6,15 @@ import (
 	"errors"
 	"io/ioutil"
 	"os"
-	"sync/atomic"
+	"sync"
 	"time"
 )
 
 // GobPersist is a simple helper package that allows saving and loading a target to a file using gob.
 // It also handles timed saves
 type GobPersist struct {
-	modified uint32
+	sync.Mutex
+	modified bool
 
 	// Filename is the name of the file to use to persist the information
 	Filename string
@@ -58,8 +59,7 @@ func (g *GobPersist) Load() error {
 	return err
 }
 
-// Save will write the Target to file, regardless if it was changed or how long ago the previous save was.
-func (g *GobPersist) Save() error {
+func (g *GobPersist) save() error {
 	if g.Filename == "" {
 		return nil
 	}
@@ -81,12 +81,21 @@ func (g *GobPersist) Save() error {
 
 done:
 	if err == nil {
+		g.modified = false
 		g.nextSave = time.Now().Add(g.SaveInterval)
 	} else {
 		g.nextSave = time.Now().Add(RetrySaveInterval)
 	}
 
 	return err
+}
+
+// Save will write the Target to file, regardless if it was changed or how long ago the previous save was.
+func (g *GobPersist) Save() error {
+	g.Lock()
+	defer g.Unlock()
+
+	return g.save()
 }
 
 // SaveConditional performs a save operation if the Target is modified and the minimum 'SaveInterval'
@@ -102,16 +111,19 @@ func (g *GobPersist) SaveConditional(modified bool) error {
 
 	var err error
 
-	if atomic.CompareAndSwapUint32(&g.modified, 1, 0) {
-		if time.Now().After(g.nextSave) {
-			err = g.Save()
-		}
+	g.Lock()
+	if g.modified && time.Now().After(g.nextSave) {
+		err = g.save()
 	}
+	g.Unlock()
 
 	return err
 }
 
 // Touch signals that the Target has been changed and should be called after modifications
 func (g *GobPersist) Touch() {
-	atomic.StoreUint32(&g.modified, 1)
+	g.Lock()
+	defer g.Unlock()
+
+	g.modified = true
 }
