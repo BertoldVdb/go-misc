@@ -4,6 +4,7 @@ go 1.13
 
 require (
 	github.com/BertoldVdb/logrus-prefixed-formatter v0.5.2
+	github.com/cloudflare/odoh-go v0.1.3 // indirect
 	github.com/google/uuid v1.1.1
 	github.com/mattn/go-colorable v0.1.7 // indirect
 	github.com/mgutz/ansi v0.0.0-20200706080929-d51e80ef957d // indirect
