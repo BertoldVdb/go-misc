@@ -18,7 +18,7 @@ type Device struct {
 
 func OpenDevice(deviceID int) (*Device, error) {
 	d := &Device{
-		frequency: 1000000,
+		Frequency: 1000000,
 	}
 
 	var err error
