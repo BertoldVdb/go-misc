@@ -16,13 +16,13 @@ type Device struct {
 	Frequency uint32
 }
 
-func OpenDevice(deviceID int) (*Device, error) {
+func OpenDevice(busID int, deviceID int) (*Device, error) {
 	d := &Device{
 		Frequency: 1000000,
 	}
 
 	var err error
-	d.file, err = os.OpenFile(fmt.Sprintf("/dev/spidev%d", deviceID), syscall.O_RDWR|syscall.O_NOCTTY, 0600)
+	d.file, err = os.OpenFile(fmt.Sprintf("/dev/spidev%d.%d", busID, deviceID), syscall.O_RDWR|syscall.O_NOCTTY, 0600)
 	if err != nil {
 		return nil, err
 	}
