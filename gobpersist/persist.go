@@ -40,6 +40,9 @@ var (
 
 // Load will try to restore the structure Target points to.
 func (g *GobPersist) Load() error {
+	g.Lock()
+	defer g.Unlock()
+
 	if g.Filename == "" {
 		return ErrorNoFilename
 	}

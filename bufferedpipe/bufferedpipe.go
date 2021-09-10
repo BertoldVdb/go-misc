@@ -107,6 +107,7 @@ func (b *BufferedPipe) writeNonBlocking(p []byte) (int, error) {
 
 	b.Lock()
 	if b.closed {
+        b.Unlock()
 		return 0, ErrorClosed
 	}
 

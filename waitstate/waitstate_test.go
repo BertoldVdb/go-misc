@@ -113,6 +113,7 @@ func TestGetWithSet(t *testing.T) {
 		time.Sleep(200 * time.Millisecond)
 		w.Close()
 	}()
+
 	updateCount, value, err = w.GetNewer(context.Background(), updateCount)
 	if err != ErrorClosed {
 		t.Error("Did not return ErrorClosed")
