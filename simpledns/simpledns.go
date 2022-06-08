@@ -179,10 +179,10 @@ func (h *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 					Ns:      h.NSNames[0],
 					Mbox:    h.SoaMBox,
 					Serial:  uint32(time.Now().UnixNano() * int64(time.Nanosecond) / int64(time.Second)),
-					Refresh: 21600,
-					Retry:   3600,
-					Expire:  3600 * 24,
-					Minttl:  300,
+					Refresh: 3600,
+					Retry:   60,
+					Expire:  3600,
+					Minttl:  10,
 				})
 			}
 		}
