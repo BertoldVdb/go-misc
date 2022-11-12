@@ -1,6 +1,7 @@
 package serial
 
 import (
+	"errors"
 	"io"
 	"time"
 )
@@ -44,3 +45,5 @@ type PortPins struct {
 func Open(options *PortOptions) (Port, error) {
 	return openPortOs(options)
 }
+
+var ErrorClosed = errors.New("port has been closed")

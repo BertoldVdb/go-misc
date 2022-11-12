@@ -1,9 +1,11 @@
+//go:build linux
+
 package serial
 
 import (
-	"errors"
 	"io"
 	"os"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -12,11 +14,21 @@ import (
 )
 
 type serialPortLinux struct {
-	file      *os.File
-	closeChan chan (struct{})
+	file *os.File
+
+	/* Mutex to protest the file descriptor against simultaneous close */
+	mtx    sync.Mutex
+	wg     sync.WaitGroup
+	closed bool
 }
 
 func (port *serialPortLinux) SetFlowControl(enabled bool) error {
+	port.mtx.Lock()
+	defer port.mtx.Unlock()
+	if port.closed {
+		return ErrorClosed
+	}
+
 	termios, err := unix.IoctlGetTermios(int(port.file.Fd()), unix.TCGETS2)
 	if err != nil {
 		return err
@@ -32,6 +44,12 @@ func (port *serialPortLinux) SetFlowControl(enabled bool) error {
 }
 
 func (port *serialPortLinux) SetInterfaceRate(rate uint32) error {
+	port.mtx.Lock()
+	defer port.mtx.Unlock()
+	if port.closed {
+		return ErrorClosed
+	}
+
 	termios, err := unix.IoctlGetTermios(int(port.file.Fd()), unix.TCGETS2)
 	if err != nil {
 		return err
@@ -69,8 +87,6 @@ func openPortOs(options *PortOptions) (*serialPortLinux, error) {
 
 	port := &serialPortLinux{}
 	port.file = file
-	port.closeChan = make(chan (struct{}), 1)
-	port.closeChan <- struct{}{}
 
 	/* Set default termios */
 	err = port.defaultPortConfig()
@@ -100,33 +116,45 @@ failed:
 	return nil, err
 }
 
-func (port *serialPortLinux) setPinIoctl(enabled bool, pin int) error {
-	req := unix.TIOCMBIC
-	if enabled {
-		req = unix.TIOCMBIS
-	}
-
-	r, _, err := syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(req), uintptr(unsafe.Pointer(&pin)))
-
-	if err != 0 || r < 0 {
-		return os.NewSyscallError("TIOCMBIC/TIOCMBIS", err)
-	}
-	return nil
-}
-
 func (port *serialPortLinux) DoBreak(duration time.Duration) error {
-	r, _, err := syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(unix.TIOCSBRK), 0)
-	if err != 0 || r < 0 {
+	port.mtx.Lock()
+	defer port.mtx.Unlock()
+	if port.closed {
+		return ErrorClosed
+	}
+
+	_, _, err := syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(unix.TIOCSBRK), 0)
+	if err != 0 {
 		return os.NewSyscallError("TIOCSBRK", err)
 	}
 
 	time.Sleep(duration)
 
-	r, _, err = syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(unix.TIOCCBRK), 0)
-	if err != 0 || r < 0 {
+	_, _, err = syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(unix.TIOCCBRK), 0)
+	if err != 0 {
 		return os.NewSyscallError("TIOCCBRK", err)
 	}
 
+	return nil
+}
+
+func (port *serialPortLinux) setPinIoctl(enabled bool, pin int) error {
+	port.mtx.Lock()
+	defer port.mtx.Unlock()
+	if port.closed {
+		return ErrorClosed
+	}
+
+	req := unix.TIOCMBIC
+	if enabled {
+		req = unix.TIOCMBIS
+	}
+
+	_, _, err := syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(req), uintptr(unsafe.Pointer(&pin)))
+
+	if err != 0 {
+		return os.NewSyscallError("TIOCMBIC/TIOCMBIS", err)
+	}
 	return nil
 }
 
@@ -141,10 +169,16 @@ func (port *serialPortLinux) SetRTS(enabled bool) error {
 func (port *serialPortLinux) GetPins() (PortPins, error) {
 	pins := PortPins{}
 
-	var v int
-	r, _, err := syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(unix.TIOCMGET), uintptr(unsafe.Pointer(&v)))
+	port.mtx.Lock()
+	defer port.mtx.Unlock()
+	if port.closed {
+		return pins, ErrorClosed
+	}
 
-	if err != 0 || r < 0 {
+	var v int
+	_, _, err := syscall.Syscall(syscall.SYS_IOCTL, uintptr(port.file.Fd()), uintptr(unix.TIOCMGET), uintptr(unsafe.Pointer(&v)))
+
+	if err != 0 {
 		return pins, os.NewSyscallError("TIOCMBIC/TIOCMBIS", err)
 	}
 
@@ -160,31 +194,38 @@ func (port *serialPortLinux) GetPins() (PortPins, error) {
 }
 
 func (port *serialPortLinux) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	port.wg.Add(1)
+	defer port.wg.Done()
+
 	for {
-		token, ok := <-port.closeChan
-		if !ok {
-			return 0, errors.New("Port closed")
-		}
-
-		n, err := port.file.Read(p)
-		port.closeChan <- token
-
-		if err != io.EOF {
+		if n, err := port.file.Read(p); err != io.EOF || n > 0 {
 			return n, err
 		}
 	}
 }
 
 func (port *serialPortLinux) Write(p []byte) (int, error) {
+	port.wg.Add(1)
+	defer port.wg.Done()
+
 	return port.file.Write(p)
 }
 
 func (port *serialPortLinux) Close() error {
-	_, ok := <-port.closeChan
-	if ok {
-		close(port.closeChan)
-		return port.Close()
+	port.mtx.Lock()
+	defer port.mtx.Unlock()
+
+	if !port.closed {
+		port.closed = true
+		port.file.Close()
 	}
+
+	/* Wait for blocking actions to have completed */
+	port.wg.Wait()
 
 	return nil
 }
